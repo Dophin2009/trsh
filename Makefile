@@ -1,11 +1,11 @@
 CC=gcc
-OUT=trsh.out
-FILES=trsh.c util.c
+OUT=trsh
+FILES=trsh.c builtins.c env.c util.c
 
 default: build
 
 build:
-	$(CC) -o $(OUT) $(FILES)
+	$(CC) -o $(OUT).out $(FILES)
 
 build-debug:
-	$(CC) -g -o $(OUT)-debug $(FILES)
+	$(CC) -g -o $(OUT)-debug.out $(FILES)

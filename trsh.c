@@ -2,13 +2,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
+#include "builtins.h"
+#include "trsh.h"
 #include "util.h"
-
-void sh_loop();
-char *get_line();
-char **parse_line(char *line, int *size);
-/* int exec_line(char **args); */
 
 int main() {
   sh_loop();
@@ -16,34 +15,59 @@ int main() {
 }
 
 void sh_loop() {
-  while (1) {
-    fprintf(stdout, "> ");
-    char *line = get_line();
+  char *line;
+  char **args;
+  int args_size;
+  int status = 0;
+
+  do {
+    char *statusline = status_line(status);
+    fprintf(stdout, "%s ", statusline);
+    free(statusline);
+
+    line = get_line();
 
     if (!strcmp("exit", line)) {
       free(line);
       exit(EXIT_SUCCESS);
     }
 
-    int args_size;
-    char **args = parse_line(line, &args_size);
+    args = parse_line(line, &args_size);
     if (!args) {
       exit(EXIT_FAILURE);
     }
 
-    for (int i = 0; i < args_size; i++) {
-      printf("%d: %s\n", i, args[i]);
-    }
-
-    /* int status = exec_line(args); */
-    /* if (!status) { */
-    /* break; */
-    /* } */
+    status = exec_line(args, args_size);
 
     free(line);
+    arr_free(args, args_size);
+  } while (1);
+}
 
-    free_arr(args, args_size);
+int exec_line(char **args, int argc) {
+  if (argc <= 0) {
+    return 0;
   }
+
+  int status = builtin_exec(args, argc);
+  if (status == 127) {
+    pid_t pid;
+    pid = fork();
+    if (pid == 0) {
+      if (execvp(args[0], args) == -1) {
+        perror("trsh");
+      }
+      exit(EXIT_FAILURE);
+    } else if (pid < 0) {
+      perror("trsh");
+    } else {
+      do {
+        waitpid(pid, &status, WUNTRACED);
+      } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+    }
+  }
+
+  return status;
 }
 
 char **parse_line(char *line, int *size) {
@@ -62,6 +86,10 @@ char **parse_line(char *line, int *size) {
 
   char *token;
   while ((token = strsep(&line, " ")) != NULL) {
+    if (strlen(token) == 0) {
+      continue;
+    }
+
     int i;
     // Resolve escapes and check for quotes
     for (i = 0; i < strlen(token); i++) {
@@ -135,12 +163,22 @@ char **parse_line(char *line, int *size) {
     }
   }
 
-  if (strlen(args[args_pos]) == 0) {
-    free(args[args_pos]);
-    --args_pos;
-  }
-
   free(token);
+
+  if (strlen(args[args_pos]) != 0) {
+    ++args_pos;
+    if (args_pos >= args_cap) {
+      ++args_cap;
+      args = realloc(args, args_cap * sizeof(char *));
+      if (!args) {
+        fprint_error_alloc();
+        exit(EXIT_FAILURE);
+      }
+    }
+  } else {
+    free(args[args_pos]);
+  }
+  args[args_pos] = NULL;
 
   *size = args_pos + 1;
   return args;
@@ -176,4 +214,16 @@ char *get_line() {
   }
 
   return buffer;
+}
+
+char *status_line(int status) {
+  char *cwd = getcwd(NULL, 0);
+  char *line = concat(2, cwd, " >");
+  free(cwd);
+
+  if (line == NULL) {
+    fprint_error_alloc();
+    exit(EXIT_FAILURE);
+  }
+  return line;
 }
